@@ -1,0 +1,154 @@
+Index: proprietary/qcril/qcril_qmi/qcril_qmi_nas.c
+===================================================================
+--- proprietary/qcril/qcril_qmi/qcril_qmi_nas.c	(revision 6744)
++++ proprietary/qcril/qcril_qmi/qcril_qmi_nas.c	(revision 6745)
+@@ -39196,45 +39196,77 @@
+ )
+ {
+    boolean need_to_send_unsol = FALSE;
+-
++   // add lyw 170728 from QC patch for bug152681 start
++   qcril_nas_emer_call_end_hndlr_params *hdlr_params;  
+    QCRIL_LOG_FUNC_ENTRY();
+    QCRIL_NOTUSED(ret_ptr);
+ 
+-   NAS_CACHE_LOCK();
++   //NAS_CACHE_LOCK();
+    uint32_t slot = qmi_ril_get_sim_slot();
+-   qcril_card_status_e_type card_status = nas_common_info.card_info[ slot ].status;
++   /*qcril_card_status_e_type card_status = nas_common_info.card_info[ slot ].status;
+    int prov_status = nas_common_info.prov_status;
+    int *is_eme_ip_call = (int*) params_ptr->data;
+-   nas_cached_info.is_eme_ip_call = *is_eme_ip_call;
+-   if (nas_cached_info.nas_enter_ecbm_propagation_pending)
++   nas_cached_info.is_eme_ip_call = *is_eme_ip_call;*/
++   //if (nas_cached_info.nas_enter_ecbm_propagation_pending)
++   hdlr_params = (qcril_nas_emer_call_end_hndlr_params *) params_ptr->data;
++   int is_eme_call_connected = hdlr_params->is_eme_call_connected;
++
++   if(is_eme_call_connected)
+    {
+-      need_to_send_unsol = TRUE;
+-      nas_cached_info.nas_enter_ecbm_propagation_pending = FALSE;
++      //need_to_send_unsol = TRUE;
++      //nas_cached_info.nas_enter_ecbm_propagation_pending = FALSE;
++       NAS_CACHE_LOCK();
++       nas_cached_info.is_eme_ip_call = hdlr_params->is_eme_ip_call;
++
++       if (nas_cached_info.nas_enter_ecbm_propagation_pending)
++       {    need_to_send_unsol = TRUE;
++           nas_cached_info.nas_enter_ecbm_propagation_pending = FALSE;
++       }else{
++           nas_cached_info.eme_call_end_recently = TRUE;
++
++           const struct timeval TIMER = { 3 , 0 }; // 3 seconds
++           qcril_setup_timed_callback(QCRIL_DEFAULT_INSTANCE_ID, QCRIL_DEFAULT_MODEM_ID, qcril_qmi_nas_eme_call_end_recently_timeout_cb, &TIMER, &nas_cached_info.eme_call_end_recently_tcb_id);
++       }
++       NAS_CACHE_UNLOCK();
++       if (need_to_send_unsol)
++       {
++           qmi_ril_nwr_set_eme_cbm( QMI_RIL_EME_CBM_ACTIVE );
++       }
+    }
+    else
+    {
+-      nas_cached_info.eme_call_end_recently = TRUE;
++      /*nas_cached_info.eme_call_end_recently = TRUE;
+ 
+       const struct timeval TIMER = { 3 , 0 }; // 3 seconds
+       qcril_setup_timed_callback( QCRIL_DEFAULT_INSTANCE_ID, QCRIL_DEFAULT_MODEM_ID,
+                                   qcril_qmi_nas_eme_call_end_recently_timeout_cb,
+-                                  &TIMER, &nas_cached_info.eme_call_end_recently_tcb_id);
++                                  &TIMER, &nas_cached_info.eme_call_end_recently_tcb_id);*/
+ 
++       QCRIL_LOG_DEBUG("Emergency call was not connected...");
+    }
++   NAS_CACHE_LOCK();
++   qcril_card_status_e_type card_status = nas_common_info.card_info[ slot ].status;
++   int prov_status = nas_common_info.prov_status;
+    NAS_CACHE_UNLOCK();
+ 
+-   if (need_to_send_unsol)
++   /*if (need_to_send_unsol)
+    {
+       qmi_ril_nwr_set_eme_cbm( QMI_RIL_EME_CBM_ACTIVE );
+    }
+-   else
++   else*/
++   QCRIL_LOG_DEBUG("need_to_send_unsol: %d prov_status: %d card_status: %d",        need_to_send_unsol, prov_status, card_status);
++   if((need_to_send_unsol == FALSE) &&
++           (prov_status != RIL_E_SUCCESS) && (card_status == QCRIL_CARD_STATUS_UP))
+    {
+-      QCRIL_LOG_DEBUG("prov_status: %d card_status: %d", prov_status, card_status);
++      /*QCRIL_LOG_DEBUG("prov_status: %d card_status: %d", prov_status, card_status);
+       if((prov_status != RIL_E_SUCCESS) && (card_status == QCRIL_CARD_STATUS_UP))
+       {
+          QCRIL_LOG_DEBUG("check sim prov state...");
+          qcril_qmi_nas_prov_check_sim_provisioning();
+-      }
++      }*/
++       QCRIL_LOG_DEBUG("check sim provisioning state...");
++       qcril_qmi_nas_prov_check_sim_provisioning();
++       // add lyw 170728 from QC patch for bug152681 end
+    }
+ 
+    QCRIL_LOG_FUNC_RETURN();
+Index: proprietary/qcril/qcril_qmi/qcril_qmi_nas.h
+===================================================================
+--- proprietary/qcril/qcril_qmi/qcril_qmi_nas.h	(revision 6744)
++++ proprietary/qcril/qcril_qmi/qcril_qmi_nas.h	(revision 6745)
+@@ -341,6 +341,13 @@
+     int                       repost_event_id;
+ } qcril_nas_dsds_activate_repost_params;
+ 
++// modify lyw 170728 from QC patch for bug152681 start
++typedef struct{
++    int  is_eme_ip_call;
++    int  is_eme_call_connected;
++} qcril_nas_emer_call_end_hndlr_params;
++// modify lyw 170728 from QC patch for bug152681 end
++
+ /*=========================================================================
+   FUNCTION:  qcril_qmi_dms_unsolicited_indication_cb_helper
+ 
+Index: proprietary/qcril/qcril_qmi/qcril_qmi_voice.c
+===================================================================
+--- proprietary/qcril/qcril_qmi/qcril_qmi_voice.c	(revision 6744)
++++ proprietary/qcril/qcril_qmi/qcril_qmi_voice.c	(revision 6745)
+@@ -5214,7 +5214,8 @@
+                      CALL_TYPE_EMERGENCY_IP_V02 == iter_call_info->call_type ||
+                      CALL_TYPE_EMERGENCY_VT_V02 == iter_call_info->call_type)
+               {
+-                 if(call_info_entry->elaboration &
++                  // modify lyw 170728 from QC patch for bug152681 start
++                 /*if(call_info_entry->elaboration &
+                     QCRIL_QMI_VOICE_VOIP_CALLINFO_ELA_CALL_GOT_CONNECTED)
+                  {
+                    int is_eme_ip = (CALL_TYPE_EMERGENCY_IP_V02 == iter_call_info->call_type ||
+@@ -5226,7 +5227,25 @@
+                                       &is_eme_ip,
+                                       sizeof(is_eme_ip),
+                                       (RIL_Token) QCRIL_TOKEN_ID_INTERNAL );
+-                 }
++                 }*/
++                  qcril_nas_emer_call_end_hndlr_params eme_call_end_hdlr_param;
++
++                  eme_call_end_hdlr_param.is_eme_ip_call =
++                      (CALL_TYPE_EMERGENCY_IP_V02 == iter_call_info->call_type ||
++                       CALL_TYPE_EMERGENCY_VT_V02 == iter_call_info->call_type);
++
++                  eme_call_end_hdlr_param.is_eme_call_connected =
++                      call_info_entry->elaboration &
++                      QCRIL_QMI_VOICE_VOIP_CALLINFO_ELA_CALL_GOT_CONNECTED;
++
++                  qcril_event_queue( QCRIL_DEFAULT_INSTANCE_ID,
++                          QCRIL_DEFAULT_MODEM_ID,
++                          QCRIL_DATA_ON_STACK,
++                          QCRIL_EVT_QMI_RIL_CONNECTED_EMEGENCY_CALL_END,
++                          &eme_call_end_hdlr_param,
++                          sizeof(eme_call_end_hdlr_param),
++                          (RIL_Token) QCRIL_TOKEN_ID_INTERNAL );
++                  // modify lyw 170728 from QC patch for bug152681 end
+ #ifndef QMI_RIL_UTF
+                  qcril_am_reset_emergency_rat();
+ #endif
